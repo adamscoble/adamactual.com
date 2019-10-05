@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<link rel="icon" type="image/png" href="./favicon.png" />
+	<title>Adam Actual</title>
+	<style>
+		* {
+			box-sizing: border-box;
+			margin: 0;
+			padding: 0;
+			font-size: 1em;
+			font-family: inherit;
+		}
+
+		html {
+			height: 100%;
+			font-size: .625em;
+		}
+
+		body {
+			height: 100%;
+			background-color: #000;
+		}
+
+		#terminal {
+			height: 100%;
+			padding-left: 1.5em;
+		}
+
+		#humvee {
+			width: 100px;
+			height: auto;
+			position: absolute;
+			bottom: 1.5em;
+			right: 1.5em;
+			filter: grayscale(100%);
+			opacity: 0.1;
+		}
+
+		@media only screen and (min-width: 992px) {
+			#humvee {
+				right: calc(1.5em + 17px);
+			}
+		}
+	</style>
+
+	<link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css">
+</head>
+<body>
+	<div id="terminal"></div>
+	<img id="humvee" src="humvee.png" />
+
+	<script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>
+	<script src="./node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+	<script>
+		const terminal = new Terminal({ cursorBlink: true, cursorStyle: "underline" });
+		const fitAddon = new FitAddon.FitAddon();
+
+		terminal.loadAddon(fitAddon);
+		terminal.open(document.getElementById('terminal'));
+
+		window.onresize = () => fitAddon.fit();
+		fitAddon.fit();
+
+		if (window.innerWidth >= 992) { terminal.focus(); }
+
+		let commands = {},
+			commandKeys = [],
+			maxCommandDisplayLength = 0;
+
+		function initCommands() {
+			commands = {};
+			const hotbrassURL = 'https://www.hotbrassgame.com';
+
+			addCommand('help', 'Show this list.', help);
+			addCommand('clear', 'Clear the terminal.', clear);
+			addCommand('log', 'Logs any included arguments to the browser\'s console.', log, '[arg ...]');
+			addCommand('contact', `Print the contact email address to the terminal.`, contact);
+			addCommand('hotbrass', `Visit the Hot Brass website (${hotbrassURL}).`, () => goToURL(hotbrassURL));
+
+			addCommand('hello|hey|hi', '', () => terminal.write('Howdy!'));
+
+			commandKeys = Object.keys(commands).sort();
+
+			for (const key of commandKeys) { maxCommandDisplayLength = Math.max(maxCommandDisplayLength, commands[key].display.length); }
+			maxCommandDisplayLength += 3;
+		}
+
+		function addCommand(command, description, action, args = '') {
+			const commandAlts = command.split('|');
+
+			for (var i = 0; i < commandAlts.length; i++) {
+				commands[commandAlts[i]] = {
+					display: commandAlts[i],
+					isAltCommand: i != 0,
+					args: args,
+					description: description,
+					action: action
+				};
+			}
+
+			if (args.length > 0) { commands[command].display += ` ${args}`; }
+		}
+
+		function help() {
+			for (const key of commandKeys) {
+				const command = commands[key];
+
+				if (command.isAltCommand || command.description.length == 0) { continue; }
+
+				terminal.writeln(`${command.display.padEnd(maxCommandDisplayLength)}${command.description}`);
+			}
+		}
+
+		function clear() {
+			terminal.clear();
+		}
+
+		function log(args) {
+			if (args.length == 0) {
+				terminal.writeln(`Log failed: no arguments supplied.`);
+
+				return;
+			}
+
+			let logged = '';
+
+			args.forEach((item, index) => {
+				console.log(item);
+
+				const prefix = index == 0 ? '' : index < args.length - 1 ? ', ' : ' and ';
+
+				logged += `${prefix}'${item}'`;
+			});
+
+			terminal.writeln(`Successfully logged ${logged} to the browser's console.`);
+		}
+
+		function contact() {
+			const email = ['support', 'adamactual']
+
+			terminal.writeln(`${email[0]}@${email[1]}.com`);
+		}
+
+		function goToURL(url) {
+			window.location.href = url;
+
+			clear();
+		}
+
+		function init() {
+			let splashImage = new XMLHttpRequest();
+			splashImage.open('GET', 'splash-image.txt');
+			splashImage.onreadystatechange = () => {
+				if (splashImage.readyState !== 4) { return; }
+
+				initTerminal();
+				terminal.writeln('');
+
+				if (splashImage.status === 200) {
+					const lines = splashImage.responseText.split(/\r?\n/);
+					lines.forEach(line => { terminal.writeln(line); });
+					terminal.writeln('');
+				} else { // Getting splash image failed
+					terminal.writeln('AdamActual\r\n');
+				}
+
+				terminal.writeln(`Type 'help' for available commands.`);
+				prompt();
+			}
+			splashImage.send();
+		}
+
+		function initTerminal() {
+			let buffer = '';
+
+			terminal.onKey(e => {
+				const printable = !e.domEvent.ctrlKey && !e.domEvent.altKey && !e.domEvent.altGraphKey && !e.domEvent.metaKey;
+
+				// TODO: Add tab keyCode handler to autocomplete commands
+
+				if (e.domEvent.keyCode === 13) {
+					onCommand(buffer);
+					buffer = '';
+					prompt();
+				} else if (e.domEvent.keyCode === 8) {
+	                // Do not delete the prompt
+	                if (terminal._core.buffer.x > 2) {
+	                	buffer = buffer.substring(0, buffer.length - 1);
+	                	terminal.write('\b \b');
+	                }
+            	} else if (printable) {
+	                buffer += e.key;
+	                terminal.write(e.key);
+	            }
+        	});
+		}
+
+		function prompt() {
+			terminal.write('\r\n$ ');
+		}
+
+		function onCommand(command) {
+			const regex = /[^\s"]+|"([^"]*)"/gi;
+			const args = [];
+			let match;
+
+			do {
+			    match = regex.exec(command);
+			    if (match != null) { args.push(match[1] ? match[1] : match[0]); }
+			} while (match != null);
+
+			command = args.shift();
+
+			terminal.write('\r\n');
+
+			if (!commands.hasOwnProperty(command)) {
+				terminal.writeln(`Command '${command}' not found`);
+
+				return;
+			}
+
+			commands[command].action(args);
+		}
+
+		initCommands();
+		init();
+	</script>
+</body>
+</html>
